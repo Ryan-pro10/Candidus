@@ -1,104 +1,62 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="pt-BR">
-  <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Candidus Gestão Financeira</title>
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Candidus Gestão Financeira</title>
 
-    <!-- ===================================================================
+<!-- ===================================================================
      CONFIGURAÇÃO — cole aqui as 2 chaves do seu Supabase
-     (Project Settings -> API). A anon key é pública, pode ficar aqui.
+     (Settings -> API Keys). Use a URL e a anon key DO MESMO projeto.
      =================================================================== -->
-    <script>
-      const SUPABASE_URL =
-        "https://bevxncltfexzdoyfyjcw.supabase.co";
-      const SUPABASE_ANON_KEY =
-        "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImJldnhuY2x0ZmV4emRveWZ5amN3Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODkxODExNTEsImV4cCI6MjEwNDc1NzE1MX0.wiWeB1S4tZIsUH5ds9YC4E51PiNUR_8aoLDTQdMKpLg";
-    </script>
+<script>
+  const SUPABASE_URL      = "https://bevxncltfexzdoyfyjcw.supabase.co";
+  const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImJldnhuY2x0ZmV4emRveWZ5amN3Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODkxODExNTEsImV4cCI6MjEwNDc1NzE1MX0.wiWeB1S4tZIsUH5ds9YC4E51PiNUR_8aoLDTQdMKpLg";
+</script>
 
-    <link rel="preconnect" href="https://fonts.googleapis.com" />
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-    <link
-      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Space+Grotesk:wght@600;700&display=swap"
-      rel="stylesheet"
-    />
-    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-    <link rel="stylesheet" href="/styles.css">
-  </head>
-  <body>
-    <!-- ================= LOGIN ================= -->
-    <div id="login">
-      <div class="login-card">
-        <div class="brand">
-          <div class="mark">C</div>
-          <div class="name">Candidus</div>
-        </div>
-        <p class="sub">Gestão Financeira · BPO · Controladoria</p>
-        <div id="loginMsg"></div>
-        <form id="loginForm">
-          <div class="field">
-            <label>E-mail</label>
-            <input
-              type="email"
-              id="email"
-              placeholder="voce@empresa.com"
-              required
-            />
-          </div>
-          <div class="field">
-            <label>Senha</label>
-            <input
-              type="password"
-              id="password"
-              placeholder="••••••••"
-              required
-            />
-          </div>
-          <button class="btn" type="submit" id="loginBtn">Entrar</button>
-        </form>
-      </div>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Space+Grotesk:wght@600;700&display=swap" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+<div id="login">
+  <div class="login-card">
+    <div class="brand"><div class="mark">C</div><div class="name">Candidus</div></div>
+    <p class="sub">Gestão Financeira · BPO · Controladoria</p>
+    <div id="loginMsg"></div>
+    <form id="loginForm">
+      <div class="field"><label>E-mail</label>
+        <input type="email" id="email" placeholder="voce@empresa.com" required></div>
+      <div class="field"><label>Senha</label>
+        <input type="password" id="password" placeholder="••••••••" required></div>
+      <button class="btn full" type="submit" id="loginBtn">Entrar</button>
+    </form>
+  </div>
+</div>
+
+<div id="app" class="hidden">
+  <div class="topbar">
+    <button class="burger" id="burger" title="Recolher menu">☰</button>
+    <div class="mark">C</div><div class="name">Candidus</div>
+    <div class="company-pick">
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 21h18M5 21V7l7-4 7 4v14M9 9h1m4 0h1M9 13h1m4 0h1M9 17h1m4 0h1"/></svg>
+      <select id="companySel"></select>
     </div>
+    <div class="spacer"></div>
+    <div class="user"><span class="email" id="userEmail"></span>
+      <button class="out" id="logout">Sair</button></div>
+  </div>
+  <nav class="side" id="side"></nav>
+  <main class="main" id="main"></main>
+</div>
 
-    <!-- ================= APP ================= -->
-    <div id="app" class="hidden">
-      <div class="topbar">
-        <button class="burger" id="burger" title="Recolher menu">☰</button>
-        <div class="mark">C</div>
-        <div class="name">Candidus</div>
-        <div class="company-pick">
-          <svg
-            width="15"
-            height="15"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            stroke-width="2"
-          >
-            <path
-              d="M3 21h18M5 21V7l7-4 7 4v14M9 9h1m4 0h1M9 13h1m4 0h1M9 17h1m4 0h1"
-            />
-          </svg>
-          <select id="companySel"></select>
-        </div>
-        <div class="spacer"></div>
-        <div class="user">
-          <span class="email" id="userEmail"></span>
-          <button class="out" id="logout">Sair</button>
-        </div>
-      </div>
+<div id="modalRoot"></div>
+<div id="toast"></div>
 
-      <nav class="side" id="side"></nav>
-
-      <main class="main">
-        <div class="page-h">
-          <h1>Dashboard</h1>
-          <span class="scope" id="scope"></span>
-        </div>
-        <div class="updated" id="updated"></div>
-        <div id="dashArea"><div class="loading">Carregando dados…</div></div>
-      </main>
-    </div>
-
-  </body>
-  <script src="./script.js"></script>
+<script src="script.js"></script>
+</body>
 </html>
