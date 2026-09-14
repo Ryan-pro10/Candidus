@@ -17,6 +17,7 @@ function toast(msg,type='ok'){
 }
 
 let companies=[], companyId=null, currentView='dashboard';
+let favSet=new Set(), userId=null;
 const scopeQ = q => companyId ? q.eq('company_id',companyId) : q;
 
 const MENU = [
@@ -24,28 +25,56 @@ const MENU = [
   {g:'Financeiro', items:[
     {ico:'↘',label:'Contas a receber',view:'contas-receber'},
     {ico:'↗',label:'Contas a pagar',view:'contas-pagar'},
-    {ico:'≋',label:'Fluxo de caixa',soon:true},
+    {ico:'≋',label:'Fluxo de caixa',view:'fluxo-caixa'},
   ]},
   {g:'Cadastros', items:[
-    {ico:'◎',label:'Clientes',soon:true},{ico:'◍',label:'Fornecedores',soon:true},
-    {ico:'⌗',label:'Categorias',soon:true},{ico:'⊞',label:'Centros de custo',soon:true},
-    {ico:'▤',label:'Contas financeiras',soon:true},{ico:'▦',label:'Empresas',soon:true},
+    {ico:'◎',label:'Clientes',view:'clientes'},{ico:'◍',label:'Fornecedores',view:'fornecedores'},
+    {ico:'⌗',label:'Categorias',view:'categorias'},{ico:'⊞',label:'Centros de custo',view:'centros-custo'},
+    {ico:'▤',label:'Contas financeiras',view:'contas-financeiras'},{ico:'▦',label:'Empresas',soon:true},
   ]},
   {g:'Gestão', items:[{ico:'◆',label:'Controladoria',soon:true},{ico:'◈',label:'BPO',soon:true}]},
 ];
+function viewMeta(v){ for(const g of MENU) for(const it of g.items) if(it.view===v) return it; return null; }
 function renderMenu(){
   const side=$('side'); side.innerHTML='';
+  if(favSet.size){
+    side.appendChild(el('div','nav-group','Favoritos'));
+    [...favSet].forEach(v=>{ const it=viewMeta(v); if(!it) return;
+      const node=el('div','nav-item link'+(v===currentView?' active':''),`<span class="ico">★</span><span class="label">${it.label}</span>`);
+      node.onclick=()=>setView(v); side.appendChild(node);
+    });
+  }
   MENU.forEach(grp=>{
     side.appendChild(el('div','nav-group',grp.g));
     grp.items.forEach(it=>{
       const cls='nav-item '+(it.soon?'soon':'link')+(it.view===currentView?' active':'');
-      const node=el('div',cls,`<span class="ico">${it.ico}</span><span class="label">${it.label}</span>${it.soon?'<span class="tag">em breve</span>':''}`);
-      if(!it.soon) node.onclick=()=>setView(it.view);
+      const star = (it.view&&!it.soon)?`<button class="star ${favSet.has(it.view)?'on':''}" title="Favoritar">${favSet.has(it.view)?'★':'☆'}</button>`:'';
+      const tag = it.soon?'<span class="tag">em breve</span>':'';
+      const node=el('div',cls,`<span class="ico">${it.ico}</span><span class="label">${it.label}</span>${tag}${star}`);
+      if(!it.soon && it.view) node.onclick=()=>setView(it.view);
       side.appendChild(node);
+      const st=node.querySelector('.star');
+      if(st) st.onclick=e=>{ e.stopPropagation(); toggleFav(it.view); };
     });
   });
 }
-function setView(v){ currentView=v; renderMenu(); if(v==='dashboard')renderDashboard(); else if(v==='contas-receber')renderContasReceber(); else if(v==='contas-pagar')renderContasPagar(); }
+async function loadFavorites(){
+  const { data }=await db.from('favorites').select('modulo');
+  favSet=new Set((data||[]).map(f=>f.modulo));
+}
+async function toggleFav(v){
+  if(favSet.has(v)){
+    const { error }=await db.from('favorites').delete().eq('user_id',userId).eq('modulo',v);
+    if(error){ toast('Erro ao desfavoritar.','err'); return; }
+    favSet.delete(v);
+  }else{
+    const { error }=await db.from('favorites').insert({user_id:userId,modulo:v});
+    if(error){ toast('Erro ao favoritar.','err'); return; }
+    favSet.add(v);
+  }
+  renderMenu();
+}
+function setView(v){ currentView=v; renderMenu(); if(v==='dashboard')renderDashboard(); else if(v==='contas-receber')renderContasReceber(); else if(v==='contas-pagar')renderContasPagar(); else if(v==='categorias')renderCategorias(); else if(v==='fluxo-caixa')renderFluxo(); else if(['clientes','fornecedores','centros-custo','contas-financeiras'].includes(v))renderCadastro(v); }
 
 function showLoginMsg(t,type='err'){ $('loginMsg').innerHTML=`<div class="msg ${type}">${t}</div>`; }
 async function boot(){
@@ -66,7 +95,9 @@ $('burger').addEventListener('click', ()=> $('app').classList.toggle('collapsed'
 async function enterApp(session){
   $('login').classList.add('hidden'); $('app').classList.remove('hidden');
   $('userEmail').textContent=session.user.email;
+  userId=session.user.id;
   await loadCompanies();
+  await loadFavorites();
   setView('dashboard');
 }
 async function loadCompanies(){
@@ -236,6 +267,21 @@ function drawReceber(){
 }
 
 function closeModal(){ $('modalRoot').innerHTML=''; }
+
+/* Modal de confirmação com a identidade do Candidus (substitui o confirm() do navegador) */
+function confirmModal({titulo, texto, ok='Confirmar', perigo=false}){
+  return new Promise(resolve=>{
+    $('modalRoot').innerHTML=`<div class="overlay"><div class="modal sm">
+      <div class="modal-h"><h2>${esc(titulo)}</h2><button class="x" id="cfX">×</button></div>
+      <div class="modal-b"><p style="font-size:14px;color:var(--text);line-height:1.5">${esc(texto)}</p></div>
+      <div class="modal-f"><button class="btn ghost" id="cfNo">Cancelar</button>
+        <button class="btn ${perigo?'danger':''}" id="cfYes">${esc(ok)}</button></div>
+    </div></div>`;
+    const done=v=>{ closeModal(); resolve(v); };
+    $('cfX').onclick=$('cfNo').onclick=()=>done(false);
+    $('cfYes').onclick=()=>done(true);
+  });
+}
 async function openNovaReceber(){
   const defaultCo=companyId||(companies[0]&&companies[0].id)||'';
   $('modalRoot').innerHTML=`<div class="overlay"><div class="modal">
@@ -578,6 +624,333 @@ async function openPagar(instId){
     if(error){ toast('Erro: '+error.message,'err'); return; }
     closeModal(); toast('Pagamento registrado!'); loadPagar();
   };
+}
+
+/* ===================== CADASTROS ===================== */
+const coName = id => { const c=companies.find(x=>x.id===id); return c?(c.nome_fantasia||c.razao_social):'—'; };
+const TIPO_ACC={conta_corrente:'Conta corrente',poupanca:'Poupança',investimento:'Investimento',caixa:'Caixa'};
+function statusPill(s){ return `<span class="pill st-${s==='ativo'?'quitado':'cancelado'}">${s==='ativo'?'Ativo':'Inativo'}</span>`; }
+
+const CAD={
+  clientes:{table:'customers',title:'Clientes',singular:'cliente',orderBy:'razao_social',asc:true,
+    columns:[
+      {label:'Nome',get:r=>esc(r.nome_fantasia||r.razao_social)},
+      {label:'CPF/CNPJ',get:r=>esc(r.cpf_cnpj||'—')},
+      {label:'Telefone',get:r=>esc(r.telefone||'—')},
+      {label:'Cidade/UF',get:r=>esc([r.cidade,r.estado].filter(Boolean).join('/')||'—')},
+      {label:'Status',get:r=>statusPill(r.status)},
+    ],
+    fields:[
+      {k:'razao_social',l:'Razão social / Nome',req:true,col:2},
+      {k:'nome_fantasia',l:'Nome fantasia'},{k:'cpf_cnpj',l:'CPF/CNPJ'},
+      {k:'email',l:'E-mail'},{k:'telefone',l:'Telefone'},
+      {k:'cep',l:'CEP'},{k:'endereco',l:'Endereço',col:2},
+      {k:'numero',l:'Número'},{k:'complemento',l:'Complemento'},
+      {k:'bairro',l:'Bairro'},{k:'cidade',l:'Cidade'},{k:'estado',l:'UF'},
+      {k:'observacoes',l:'Observações',type:'textarea',col:2},
+      {k:'status',l:'Status',type:'select',opts:[['ativo','Ativo'],['inativo','Inativo']],def:'ativo'},
+    ]},
+  fornecedores:{table:'suppliers',title:'Fornecedores',singular:'fornecedor',orderBy:'razao_social',asc:true,
+    columns:[
+      {label:'Nome',get:r=>esc(r.nome_fantasia||r.razao_social)},
+      {label:'CPF/CNPJ',get:r=>esc(r.cpf_cnpj||'—')},
+      {label:'Telefone',get:r=>esc(r.telefone||'—')},
+      {label:'Cidade/UF',get:r=>esc([r.cidade,r.estado].filter(Boolean).join('/')||'—')},
+      {label:'Status',get:r=>statusPill(r.status)},
+    ],
+    fields:[
+      {k:'razao_social',l:'Razão social / Nome',req:true,col:2},
+      {k:'nome_fantasia',l:'Nome fantasia'},{k:'cpf_cnpj',l:'CPF/CNPJ'},
+      {k:'email',l:'E-mail'},{k:'telefone',l:'Telefone'},
+      {k:'cep',l:'CEP'},{k:'endereco',l:'Endereço',col:2},
+      {k:'numero',l:'Número'},{k:'complemento',l:'Complemento'},
+      {k:'bairro',l:'Bairro'},{k:'cidade',l:'Cidade'},{k:'estado',l:'UF'},
+      {k:'observacoes',l:'Observações',type:'textarea',col:2},
+      {k:'status',l:'Status',type:'select',opts:[['ativo','Ativo'],['inativo','Inativo']],def:'ativo'},
+    ]},
+  'centros-custo':{table:'cost_centers',title:'Centros de custo',singular:'centro de custo',orderBy:'nome',asc:true,
+    columns:[{label:'Nome',get:r=>esc(r.nome)}],
+    fields:[{k:'nome',l:'Nome',req:true,col:2}]},
+  'contas-financeiras':{table:'financial_accounts',title:'Contas financeiras',singular:'conta financeira',orderBy:'nome',asc:true,
+    columns:[
+      {label:'Nome',get:r=>esc(r.nome)},
+      {label:'Tipo',get:r=>TIPO_ACC[r.tipo]||r.tipo},
+      {label:'Banco',get:r=>esc(r.banco||'—')},
+      {label:'Saldo inicial',get:r=>money(r.saldo_inicial),r:true},
+    ],
+    fields:[
+      {k:'nome',l:'Nome',req:true,col:2},
+      {k:'tipo',l:'Tipo',type:'select',req:true,def:'conta_corrente',
+        opts:[['conta_corrente','Conta corrente'],['poupanca','Poupança'],['investimento','Investimento'],['caixa','Caixa']]},
+      {k:'banco',l:'Banco'},{k:'agencia',l:'Agência'},{k:'numero',l:'Número'},
+      {k:'saldo_inicial',l:'Saldo inicial',type:'number',def:'0'},
+      {k:'data_saldo_inicial',l:'Data do saldo inicial',type:'date'},
+    ]},
+};
+
+async function renderCadastro(key){
+  const cfg=CAD[key];
+  $('main').innerHTML=`<div class="page-h"><h1>${cfg.title}</h1><span class="scope">${companyId?'':'· todas as empresas'}</span><div class="spacer"></div>
+    <button class="btn" id="btnNovoCad">+ Novo ${cfg.singular}</button></div>
+    <div class="updated">Cadastros da empresa selecionada.</div>
+    <div id="cadArea"><div class="loading">Carregando…</div></div>`;
+  $('btnNovoCad').onclick=()=>openCadForm(key,null);
+  await loadCad(key);
+}
+async function loadCad(key){
+  const cfg=CAD[key];
+  const { data,error }=await scopeQ(db.from(cfg.table).select('*')).order(cfg.orderBy,{ascending:cfg.asc});
+  if(error){ $('cadArea').innerHTML=`<div class="panel"><div class="empty">Erro: ${esc(error.message)}</div></div>`; return; }
+  cfg._rows=data||[]; drawCad(key);
+}
+function drawCad(key){
+  const cfg=CAD[key], rows=cfg._rows;
+  if(!rows.length){ $('cadArea').innerHTML=`<div class="panel"><div class="empty">Nenhum ${cfg.singular} cadastrado ainda. Clique em “+ Novo ${cfg.singular}”.</div></div>`; return; }
+  const showCo=!companyId;
+  const head=`<tr>${showCo?'<th>Empresa</th>':''}${cfg.columns.map(c=>`<th class="${c.r?'r':''}">${c.label}</th>`).join('')}<th></th></tr>`;
+  const body=rows.map((r,i)=>`<tr>${showCo?`<td>${esc(coName(r.company_id))}</td>`:''}${cfg.columns.map(c=>`<td class="${c.r?'r':''}">${c.get(r)}</td>`).join('')}
+    <td><div class="act"><button class="lnk" data-edit="${i}">Editar</button><button class="lnk del" data-del="${i}">Excluir</button></div></td></tr>`).join('');
+  $('cadArea').innerHTML=`<div class="panel"><table><thead>${head}</thead><tbody>${body}</tbody></table></div>`;
+  $('cadArea').querySelectorAll('[data-edit]').forEach(b=>b.onclick=()=>openCadForm(key,rows[+b.dataset.edit]));
+  $('cadArea').querySelectorAll('[data-del]').forEach(b=>b.onclick=()=>delCad(key,rows[+b.dataset.del]));
+}
+function cadFieldHTML(f,val){
+  const v=val==null?(f.def!=null?f.def:''):val;
+  const span=f.col===2?'style="grid-column:1/3"':'';
+  if(f.type==='select') return `<div class="field" ${span}><label>${f.l}${f.req?' *':''}</label><select data-k="${f.k}">${f.opts.map(o=>`<option value="${o[0]}" ${String(v)===o[0]?'selected':''}>${o[1]}</option>`).join('')}</select></div>`;
+  if(f.type==='textarea') return `<div class="field" ${span}><label>${f.l}</label><textarea data-k="${f.k}" rows="2">${esc(v)}</textarea></div>`;
+  const t=f.type==='number'?'number':(f.type==='date'?'date':'text');
+  return `<div class="field" ${span}><label>${f.l}${f.req?' *':''}</label><input data-k="${f.k}" type="${t}" ${f.type==='number'?'step="0.01"':''} value="${esc(v)}"></div>`;
+}
+function openCadForm(key,rec){
+  const cfg=CAD[key], creating=!rec;
+  const defaultCo=companyId||(companies[0]&&companies[0].id)||'';
+  const coField=creating?`<div class="field" style="grid-column:1/3"><label>Empresa *</label><select id="cadCo">${companies.map(c=>`<option value="${c.id}" ${c.id===defaultCo?'selected':''}>${esc(c.nome_fantasia||c.razao_social)}</option>`).join('')}</select></div>`:'';
+  $('modalRoot').innerHTML=`<div class="overlay"><div class="modal">
+    <div class="modal-h"><h2>${creating?'Novo':'Editar'} ${cfg.singular}</h2><button class="x" id="mx">×</button></div>
+    <div class="modal-b"><div class="cadgrid">${coField}${cfg.fields.map(f=>cadFieldHTML(f,rec?rec[f.k]:null)).join('')}</div></div>
+    <div class="modal-f"><button class="btn ghost" id="mCancel">Cancelar</button><button class="btn" id="mSave">Salvar</button></div>
+  </div></div>`;
+  $('mx').onclick=$('mCancel').onclick=closeModal;
+  $('mSave').onclick=async ()=>{
+    const payload={};
+    document.querySelectorAll('#modalRoot [data-k]').forEach(inp=>{ let v=inp.value; payload[inp.dataset.k]=(v===''?null:v); });
+    for(const f of cfg.fields) if(f.req && !payload[f.k]){ toast('Preencha: '+f.l,'err'); return; }
+    $('mSave').disabled=true; $('mSave').textContent='Salvando…';
+    let res;
+    if(creating){ payload.company_id=$('cadCo').value; res=await db.from(cfg.table).insert(payload); }
+    else res=await db.from(cfg.table).update(payload).eq('id',rec.id);
+    $('mSave').disabled=false; $('mSave').textContent='Salvar';
+    if(res.error){ toast('Erro: '+res.error.message,'err'); return; }
+    closeModal(); toast(cfg.singular[0].toUpperCase()+cfg.singular.slice(1)+(creating?' criado!':' atualizado!')); loadCad(key);
+  };
+}
+async function delCad(key,rec){
+  const cfg=CAD[key];
+  const nome=rec.nome_fantasia||rec.razao_social||rec.nome||'este registro';
+  const ok=await confirmModal({titulo:`Excluir ${cfg.singular}`, texto:`Deseja excluir “${nome}”? Esta ação não pode ser desfeita.`, ok:'Excluir', perigo:true});
+  if(!ok) return;
+  const { error }=await db.from(cfg.table).delete().eq('id',rec.id);
+  if(error){ toast('Não foi possível excluir (pode estar em uso). '+ (error.message||''),'err'); return; }
+  toast('Excluído.'); loadCad(key);
+}
+
+/* ---------- CATEGORIAS (hierárquicas) ---------- */
+let catRows=[];
+async function renderCategorias(){
+  $('main').innerHTML=`<div class="page-h"><h1>Categorias</h1><span class="scope">${companyId?'':'· todas as empresas'}</span><div class="spacer"></div>
+    <button class="btn" id="btnNovaCat">+ Nova categoria</button></div>
+    <div class="updated">Receitas e despesas. Pode ter categoria-pai (hierarquia).</div>
+    <div id="catArea"><div class="loading">Carregando…</div></div>`;
+  $('btnNovaCat').onclick=()=>openCatForm(null);
+  await loadCategorias();
+}
+async function loadCategorias(){
+  const { data,error }=await scopeQ(db.from('categories').select('*')).order('nome',{ascending:true});
+  if(error){ $('catArea').innerHTML=`<div class="panel"><div class="empty">Erro: ${esc(error.message)}</div></div>`; return; }
+  catRows=data||[]; drawCategorias();
+}
+function drawCategorias(){
+  if(!catRows.length){ $('catArea').innerHTML='<div class="panel"><div class="empty">Nenhuma categoria. Clique em “+ Nova categoria”.</div></div>'; return; }
+  const nameById=Object.fromEntries(catRows.map(c=>[c.id,c.nome]));
+  const showCo=!companyId;
+  const render=tipo=>{
+    const rows=catRows.filter(c=>c.tipo===tipo);
+    if(!rows.length) return '';
+    // pais primeiro, depois filhos
+    const ordered=[...rows.filter(r=>!r.parent_id),...rows.filter(r=>r.parent_id)];
+    const body=ordered.map(c=>{
+      const idx=catRows.indexOf(c);
+      const nome=c.parent_id?`&nbsp;&nbsp;↳ ${esc(c.nome)}`:`<b>${esc(c.nome)}</b>`;
+      return `<tr>${showCo?`<td>${esc(coName(c.company_id))}</td>`:''}<td>${nome}</td><td>${c.parent_id?esc(nameById[c.parent_id]||'—'):'—'}</td>
+        <td><div class="act"><button class="lnk" data-edit="${idx}">Editar</button><button class="lnk del" data-del="${idx}">Excluir</button></div></td></tr>`;
+    }).join('');
+    return `<div class="panel" style="margin-bottom:16px"><h3><span class="dot ${tipo==='receita'?'g':'r'}"></span>${tipo==='receita'?'Receitas':'Despesas'}</h3>
+      <table><thead><tr>${showCo?'<th>Empresa</th>':''}<th>Categoria</th><th>Categoria-pai</th><th></th></tr></thead><tbody>${body}</tbody></table></div>`;
+  };
+  $('catArea').innerHTML=render('receita')+render('despesa');
+  $('catArea').querySelectorAll('[data-edit]').forEach(b=>b.onclick=()=>openCatForm(catRows[+b.dataset.edit]));
+  $('catArea').querySelectorAll('[data-del]').forEach(b=>b.onclick=()=>delCat(catRows[+b.dataset.del]));
+}
+function openCatForm(rec){
+  const creating=!rec;
+  const defaultCo=companyId||(companies[0]&&companies[0].id)||'';
+  const coField=creating?`<div class="field"><label>Empresa *</label><select id="catCo">${companies.map(c=>`<option value="${c.id}" ${c.id===defaultCo?'selected':''}>${esc(c.nome_fantasia||c.razao_social)}</option>`).join('')}</select></div>`:'';
+  $('modalRoot').innerHTML=`<div class="overlay"><div class="modal sm">
+    <div class="modal-h"><h2>${creating?'Nova':'Editar'} categoria</h2><button class="x" id="mx">×</button></div>
+    <div class="modal-b">
+      ${coField}
+      <div class="field"><label>Nome *</label><input id="catNome" value="${esc(rec?rec.nome:'')}"></div>
+      <div class="field"><label>Tipo *</label><select id="catTipo">
+        <option value="receita" ${rec&&rec.tipo==='receita'?'selected':''}>Receita</option>
+        <option value="despesa" ${!rec||rec.tipo==='despesa'?'selected':''}>Despesa</option></select></div>
+      <div class="field"><label>Categoria-pai (opcional)</label><select id="catPai"><option value="">— nenhuma —</option></select></div>
+    </div>
+    <div class="modal-f"><button class="btn ghost" id="mCancel">Cancelar</button><button class="btn" id="mSave">Salvar</button></div>
+  </div></div>`;
+  $('mx').onclick=$('mCancel').onclick=closeModal;
+  const co=()=> creating?$('catCo').value:rec.company_id;
+  async function fillPai(){
+    const { data }=await db.from('categories').select('id,nome,tipo,parent_id').eq('company_id',co()).eq('tipo',$('catTipo').value).order('nome');
+    const opts=(data||[]).filter(c=>!c.parent_id && (!rec||c.id!==rec.id)); // só pais de 1º nível, e não a própria
+    $('catPai').innerHTML='<option value="">— nenhuma —</option>'+opts.map(c=>`<option value="${c.id}" ${rec&&rec.parent_id===c.id?'selected':''}>${esc(c.nome)}</option>`).join('');
+  }
+  fillPai();
+  $('catTipo').onchange=fillPai;
+  if(creating) $('catCo').onchange=fillPai;
+  $('mSave').onclick=async ()=>{
+    const nome=$('catNome').value.trim();
+    if(!nome){ toast('Informe o nome.','err'); return; }
+    $('mSave').disabled=true; $('mSave').textContent='Salvando…';
+    const payload={ nome, tipo:$('catTipo').value, parent_id:$('catPai').value||null };
+    let res;
+    if(creating){ payload.company_id=$('catCo').value; res=await db.from('categories').insert(payload); }
+    else res=await db.from('categories').update(payload).eq('id',rec.id);
+    $('mSave').disabled=false; $('mSave').textContent='Salvar';
+    if(res.error){ toast('Erro: '+res.error.message,'err'); return; }
+    closeModal(); toast('Categoria '+(creating?'criada!':'atualizada!')); loadCategorias();
+  };
+}
+async function delCat(rec){
+  const ok=await confirmModal({titulo:'Excluir categoria', texto:`Deseja excluir a categoria “${rec.nome}”?`, ok:'Excluir', perigo:true});
+  if(!ok) return;
+  const { error }=await db.from('categories').delete().eq('id',rec.id);
+  if(error){ toast('Não foi possível excluir (pode estar em uso).','err'); return; }
+  toast('Excluída.'); loadCategorias();
+}
+
+/* ===================== FLUXO DE CAIXA ===================== */
+const MES3=['jan','fev','mar','abr','mai','jun','jul','ago','set','out','nov','dez'];
+const ymOf = d => (d||'').slice(0,7);
+const ymLabel = ym => { const [y,m]=ym.split('-'); return MES3[+m-1]+'/'+y.slice(2); };
+function ymAdd(ym,n){ let [y,m]=ym.split('-').map(Number); m=m-1+n; y+=Math.floor(m/12); m=((m%12)+12)%12; return `${y}-${String(m+1).padStart(2,'0')}`; }
+function monthsRange(keys){ if(!keys.length) return []; const s=keys.slice().sort(); let cur=s[0]; const end=s[s.length-1], out=[]; let guard=0; while(cur<=end && guard++<240){ out.push(cur); cur=ymAdd(cur,1);} return out; }
+
+let fluxoData=null, fluxoMode='ambos'; let openFluxo=new Set();
+async function renderFluxo(){
+  $('main').innerHTML=`<div class="page-h"><h1>Fluxo de caixa</h1><span class="scope">${companyId?'':'· consolidado (todas as empresas)'}</span></div>
+    <div class="updated">Saldo por mês. Alterne entre realizado, previsto e os dois juntos.</div>
+    <div class="seg" style="max-width:520px;margin-bottom:20px">
+      <button type="button" data-mode="realizado">Realizado</button>
+      <button type="button" data-mode="previsto">Previsto</button>
+      <button type="button" data-mode="ambos">Realizado + Previsto</button>
+    </div>
+    <div id="fluxoArea"><div class="loading">Carregando…</div></div>`;
+  document.querySelectorAll('[data-mode]').forEach(b=>{
+    if(b.dataset.mode===fluxoMode) b.classList.add('on');
+    b.onclick=()=>{ fluxoMode=b.dataset.mode; document.querySelectorAll('[data-mode]').forEach(x=>x.classList.toggle('on',x.dataset.mode===fluxoMode)); drawFluxo(); };
+  });
+  await loadFluxo();
+}
+async function loadFluxo(){
+  try{
+    const [acc,tx,rec,pag]=await Promise.all([
+      scopeQ(db.from('financial_accounts').select('saldo_inicial,company_id')),
+      scopeQ(db.from('bank_transactions').select('tipo,valor,data,descricao,company_id')),
+      scopeQ(db.from('vw_contas_receber').select('saldo,situacao,vencimento,descricao,company_id')),
+      scopeQ(db.from('vw_contas_pagar').select('saldo,situacao,vencimento,descricao,company_id')),
+    ]);
+    for(const r of [acc,tx,rec,pag]) if(r.error) throw r.error;
+    const base=(acc.data||[]).reduce((s,x)=>s+Number(x.saldo_inicial||0),0);
+    const realE={},realS={},prevE={},prevS={},movsReal=[],movsPrev=[];
+    (tx.data||[]).forEach(t=>{
+      const k=ymOf(t.data);
+      if(t.tipo==='entrada'){ realE[k]=(realE[k]||0)+Number(t.valor); movsReal.push({ym:k,data:t.data,descricao:t.descricao||'Recebimento',valor:Number(t.valor),tipo:'entrada',origem:'realizado'}); }
+      else if(t.tipo==='saida'){ realS[k]=(realS[k]||0)+Number(t.valor); movsReal.push({ym:k,data:t.data,descricao:t.descricao||'Pagamento',valor:Number(t.valor),tipo:'saida',origem:'realizado'}); }
+    });
+    const aberto=s=>!['recebido','pago','cancelado'].includes(s);
+    (rec.data||[]).forEach(r=>{ if(aberto(r.situacao)&&Number(r.saldo)>0){ const k=ymOf(r.vencimento); prevE[k]=(prevE[k]||0)+Number(r.saldo); movsPrev.push({ym:k,data:r.vencimento,descricao:r.descricao||'A receber',valor:Number(r.saldo),tipo:'entrada',origem:'previsto'}); } });
+    (pag.data||[]).forEach(p=>{ if(aberto(p.situacao)&&Number(p.saldo)>0){ const k=ymOf(p.vencimento); prevS[k]=(prevS[k]||0)+Number(p.saldo); movsPrev.push({ym:k,data:p.vencimento,descricao:p.descricao||'A pagar',valor:Number(p.saldo),tipo:'saida',origem:'previsto'}); } });
+    fluxoData={base,realE,realS,prevE,prevS,movsReal,movsPrev};
+    drawFluxo();
+  }catch(err){
+    $('fluxoArea').innerHTML=`<div class="panel"><div class="empty">Erro ao carregar.<br><small>${esc(err.message||err)}</small></div></div>`;
+  }
+}
+function fluxoDetail(ym,movs){
+  const list=movs.filter(m=>m.ym===ym).sort((a,b)=>a.data.localeCompare(b.data));
+  if(!list.length) return '<div class="empty" style="padding:16px">Sem movimentos neste mês.</div>';
+  return `<table style="margin:0"><tbody>${list.map(m=>`<tr class="inst-row">
+    <td style="padding-left:38px;width:110px">${fmtDate(m.data)}</td>
+    <td>${esc(m.descricao)}${m.origem==='previsto'?' <span class="pill st-a_vencer" style="margin-left:4px">previsto</span>':''}</td>
+    <td class="r" style="width:150px;color:${m.tipo==='entrada'?'var(--green)':'var(--red)'}">${m.tipo==='entrada'?'+ ':'− '}${money(m.valor)}</td>
+  </tr>`).join('')}</tbody></table>`;
+}
+function drawFluxo(){
+  if(!fluxoData) return;
+  const {base,realE,realS,prevE,prevS,movsReal,movsPrev}=fluxoData;
+  const E={},S={};
+  const add=(dst,src)=>{ for(const k in src) dst[k]=(dst[k]||0)+src[k]; };
+  let detail;
+  if(fluxoMode==='realizado'){ add(E,realE); add(S,realS); detail=movsReal; }
+  else if(fluxoMode==='previsto'){ add(E,prevE); add(S,prevS); detail=movsPrev; }
+  else { add(E,realE); add(E,prevE); add(S,realS); add(S,prevS); detail=[...movsReal,...movsPrev]; }
+
+  const months=monthsRange([...new Set([...Object.keys(E),...Object.keys(S)])]);
+  if(!months.length){ $('fluxoArea').innerHTML='<div class="panel"><div class="empty">Sem movimentos para exibir neste modo.</div></div>'; return; }
+
+  let running=base, totE=0, totS=0;
+  const linhas=months.map(ym=>{
+    const e=E[ym]||0, s=S[ym]||0; totE+=e; totS+=s;
+    const ini=running, fim=running+e-s; running=fim;
+    return {ym,e,s,ini,fim};
+  });
+  const maxBar=Math.max(1,...linhas.map(l=>Math.max(l.e,l.s)));
+
+  const kpis=`<div class="cards3">
+    <div class="kpi"><div class="lbl"><span class="dot g"></span>Entradas no período</div><div class="val pos">${money(totE)}</div></div>
+    <div class="kpi"><div class="lbl"><span class="dot r"></span>Saídas no período</div><div class="val neg">${money(totS)}</div></div>
+    <div class="kpi"><div class="lbl"><span class="dot t"></span>Resultado do período</div><div class="val ${totE-totS<0?'neg':'pos'}">${money(totE-totS)}</div></div>
+  </div>`;
+
+  const chart=`<div class="panel" style="margin-bottom:16px"><h3><span class="dot t"></span>Entradas x Saídas por mês</h3>
+    <div class="legend"><span><span class="dot g"></span>Entradas</span><span><span class="dot r"></span>Saídas</span></div>
+    <div class="chart">${linhas.map(l=>`<div class="cbar-group">
+      <div class="cbars">
+        <div class="cbar e" style="height:${Math.round(l.e/maxBar*130)}px" title="Entradas ${money(l.e)}"></div>
+        <div class="cbar s" style="height:${Math.round(l.s/maxBar*130)}px" title="Saídas ${money(l.s)}"></div>
+      </div><div class="cbar-lbl">${ymLabel(l.ym)}</div></div>`).join('')}</div></div>`;
+
+  const rowsHtml=linhas.map(l=>{
+    const open=openFluxo.has(l.ym);
+    const main=`<tr class="title-row" data-ym="${l.ym}">
+      <td><span class="caret ${open?'open':''}">▶</span>${ymLabel(l.ym)}</td>
+      <td class="r">${money(l.ini)}</td>
+      <td class="r" style="color:var(--green)">${l.e?money(l.e):'—'}</td>
+      <td class="r" style="color:var(--red)">${l.s?money(l.s):'—'}</td>
+      <td class="r" style="font-weight:600;color:${l.fim<0?'var(--red)':'var(--ink)'}">${money(l.fim)}</td></tr>`;
+    const det=open?`<tr><td colspan="5" style="padding:0;background:#f8fafb">${fluxoDetail(l.ym,detail)}</td></tr>`:'';
+    return main+det;
+  }).join('');
+
+  const tabela=`<div class="panel"><h3><span class="dot t"></span>Fluxo mensal <span style="font-weight:400;color:var(--muted);font-size:12px">— clique no mês para ver os dias</span></h3>
+    <table><thead><tr><th>Mês</th><th class="r">Saldo inicial</th><th class="r">Entradas</th><th class="r">Saídas</th><th class="r">Saldo final</th></tr></thead>
+    <tbody>${rowsHtml}</tbody></table></div>`;
+
+  $('fluxoArea').innerHTML=kpis+chart+tabela;
+  $('fluxoArea').querySelectorAll('tr.title-row').forEach(tr=>tr.onclick=()=>{
+    const ym=tr.dataset.ym; openFluxo.has(ym)?openFluxo.delete(ym):openFluxo.add(ym); drawFluxo();
+  });
 }
 
 boot();
