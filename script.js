@@ -32,7 +32,12 @@ const MENU = [
     {ico:'⌗',label:'Categorias',view:'categorias'},{ico:'⊞',label:'Centros de custo',view:'centros-custo'},
     {ico:'▤',label:'Contas financeiras',view:'contas-financeiras'},{ico:'▦',label:'Empresas',soon:true},
   ]},
-  {g:'Gestão', items:[{ico:'◆',label:'Controladoria',soon:true},{ico:'◈',label:'BPO',soon:true}]},
+  {g:'BPO', items:[
+    {ico:'◈',label:'Pendências',view:'pendencias'},
+    {ico:'◇',label:'Tarefas',view:'tarefas'},
+    {ico:'▦',label:'Documentos',view:'documentos'},
+  ]},
+  {g:'Controladoria', items:[{ico:'◆',label:'DRE / Orçamento',soon:true}]},
 ];
 function viewMeta(v){ for(const g of MENU) for(const it of g.items) if(it.view===v) return it; return null; }
 function renderMenu(){
@@ -74,7 +79,7 @@ async function toggleFav(v){
   }
   renderMenu();
 }
-function setView(v){ currentView=v; renderMenu(); if(v==='dashboard')renderDashboard(); else if(v==='contas-receber')renderContasReceber(); else if(v==='contas-pagar')renderContasPagar(); else if(v==='categorias')renderCategorias(); else if(v==='fluxo-caixa')renderFluxo(); else if(['clientes','fornecedores','centros-custo','contas-financeiras'].includes(v))renderCadastro(v); }
+function setView(v){ currentView=v; renderMenu(); if(v==='dashboard')renderDashboard(); else if(v==='contas-receber')renderContasReceber(); else if(v==='contas-pagar')renderContasPagar(); else if(v==='categorias')renderCategorias(); else if(v==='fluxo-caixa')renderFluxo(); else if(v==='pendencias')renderPendencias(); else if(v==='tarefas')renderTarefas(); else if(v==='documentos')renderDocumentos(); else if(['clientes','fornecedores','centros-custo','contas-financeiras'].includes(v))renderCadastro(v); }
 
 function showLoginMsg(t,type='err'){ $('loginMsg').innerHTML=`<div class="msg ${type}">${t}</div>`; }
 async function boot(){
@@ -951,6 +956,511 @@ function drawFluxo(){
   $('fluxoArea').querySelectorAll('tr.title-row').forEach(tr=>tr.onclick=()=>{
     const ym=tr.dataset.ym; openFluxo.has(ym)?openFluxo.delete(ym):openFluxo.add(ym); drawFluxo();
   });
+}
+
+/* ===================== CENTRAL DE PENDÊNCIAS ===================== */
+const PRIO={baixa:'Baixa',media:'Média',alta:'Alta',critica:'Crítica'};
+const PRIO_ORDER={critica:0,alta:1,media:2,baixa:3};
+const PSTATUS={aberta:'Aberta',em_andamento:'Em andamento',aguardando_cliente:'Aguardando cliente',aguardando_documento:'Aguardando documento',resolvida:'Resolvida',cancelada:'Cancelada'};
+let pendCache={rows:[],tipos:[],profiles:[]};
+let pendFilters={tipo:'',prioridade:'',status:'',resp:''};
+
+async function renderPendencias(){
+  $('main').innerHTML=`<div class="page-h"><h1>Pendências</h1><span class="scope">${companyId?'':'· todas as empresas'}</span><div class="spacer"></div>
+    <div class="hbtns"><button class="btn ghost" id="btnGerar">Gerar automáticas</button><button class="btn" id="btnNovaPend">+ Nova pendência</button></div></div>
+    <div class="updated">Pendências manuais e automáticas (contas vencidas, tarefas atrasadas). As automáticas se resolvem sozinhas quando a origem é resolvida.</div>
+    <div id="pendFilters"></div>
+    <div id="pendArea"><div class="loading">Carregando…</div></div>`;
+  $('btnGerar').onclick=gerarPendenciasAuto;
+  $('btnNovaPend').onclick=()=>openPendForm(null);
+  await loadPend();
+}
+async function gerarPendenciasAuto(){
+  $('btnGerar').disabled=true; $('btnGerar').textContent='Gerando…';
+  const { data,error }=await db.rpc('gerar_pendencias_automaticas', companyId?{p_company:companyId}:{});
+  $('btnGerar').disabled=false; $('btnGerar').textContent='Gerar automáticas';
+  if(error){ toast('Erro: '+error.message,'err'); return; }
+  toast((data||0)+' pendência(s) nova(s) gerada(s).');
+  loadPend();
+}
+async function loadPend(){
+  try{
+    const [pend,tipos,profs]=await Promise.all([
+      scopeQ(db.from('pending_items').select('*')),
+      db.from('pending_item_types').select('key,nome'),
+      db.from('profiles').select('id,nome,email'),
+    ]);
+    if(pend.error) throw pend.error;
+    pendCache={rows:pend.data||[],tipos:tipos.data||[],profiles:profs.data||[]};
+    renderPendFilters(); drawPend();
+  }catch(err){
+    $('pendArea').innerHTML=`<div class="panel"><div class="empty">Erro ao carregar.<br><small>${esc(err.message||err)}</small></div></div>`;
+  }
+}
+function profName(id){ const p=pendCache.profiles.find(x=>x.id===id); return p?(p.nome||p.email):'—'; }
+function tipoName(k){ const t=pendCache.tipos.find(x=>x.key===k); return t?t.nome:k; }
+function renderPendFilters(){
+  $('pendFilters').innerHTML=`<div class="filters">
+    <div class="fg"><label>Tipo</label><select id="pfTipo"><option value="">Todos</option>${pendCache.tipos.map(t=>`<option value="${t.key}" ${pendFilters.tipo===t.key?'selected':''}>${esc(t.nome)}</option>`).join('')}</select></div>
+    <div class="fg"><label>Prioridade</label><select id="pfPrio"><option value="">Todas</option>${Object.entries(PRIO).map(([k,v])=>`<option value="${k}" ${pendFilters.prioridade===k?'selected':''}>${v}</option>`).join('')}</select></div>
+    <div class="fg"><label>Status</label><select id="pfSt"><option value="">Todos</option>${Object.entries(PSTATUS).map(([k,v])=>`<option value="${k}" ${pendFilters.status===k?'selected':''}>${v}</option>`).join('')}</select></div>
+    <div class="fg"><label>Responsável</label><select id="pfResp"><option value="">Todos</option>${pendCache.profiles.map(p=>`<option value="${p.id}" ${pendFilters.resp===p.id?'selected':''}>${esc(p.nome||p.email)}</option>`).join('')}</select></div>
+  </div>`;
+  $('pfTipo').onchange=e=>{pendFilters.tipo=e.target.value;drawPend();};
+  $('pfPrio').onchange=e=>{pendFilters.prioridade=e.target.value;drawPend();};
+  $('pfSt').onchange=e=>{pendFilters.status=e.target.value;drawPend();};
+  $('pfResp').onchange=e=>{pendFilters.resp=e.target.value;drawPend();};
+}
+function drawPend(){
+  let rows=pendCache.rows.slice();
+  if(pendFilters.tipo) rows=rows.filter(r=>r.tipo===pendFilters.tipo);
+  if(pendFilters.prioridade) rows=rows.filter(r=>r.prioridade===pendFilters.prioridade);
+  if(pendFilters.status) rows=rows.filter(r=>r.status===pendFilters.status);
+  if(pendFilters.resp) rows=rows.filter(r=>r.assigned_user_id===pendFilters.resp);
+  rows.sort((a,b)=>(PRIO_ORDER[a.prioridade]-PRIO_ORDER[b.prioridade]) || ((a.prazo||'9999').localeCompare(b.prazo||'9999')));
+  if(!rows.length){ $('pendArea').innerHTML='<div class="panel"><div class="empty">Nenhuma pendência. Clique em “Gerar automáticas” ou “+ Nova pendência”.</div></div>'; return; }
+  const showCo=!companyId;
+  const stOpts=r=>Object.entries(PSTATUS).map(([k,v])=>`<option value="${k}" ${r.status===k?'selected':''}>${v}</option>`).join('');
+  const body=rows.map((r,i)=>`<tr>
+    <td><span class="pill pr-${r.prioridade}">${PRIO[r.prioridade]}</span></td>
+    <td>${esc(tipoName(r.tipo))}</td>
+    <td><b>${esc(r.titulo)}</b>${r.descricao?`<br><span style="font-size:12px;color:var(--muted)">${esc(r.descricao)}</span>`:''}${r.origem==='automatica'?' <span class="pill ps-aberta" style="font-size:9px">auto</span>':''}</td>
+    ${showCo?`<td>${esc(coName(r.company_id))}</td>`:''}
+    <td>${esc(profName(r.assigned_user_id))}</td>
+    <td>${r.prazo?fmtDate(r.prazo):'—'}</td>
+    <td><select class="stsel ps-${r.status}" data-st="${r.id}">${stOpts(r)}</select></td>
+    <td><div class="act"><button class="lnk" data-edit="${i}">Editar</button><button class="lnk del" data-del="${i}">Excluir</button></div></td></tr>`).join('');
+  $('pendArea').innerHTML=`<div class="panel"><table><thead><tr>
+    <th>Prioridade</th><th>Tipo</th><th>Pendência</th>${showCo?'<th>Empresa</th>':''}<th>Responsável</th><th>Prazo</th><th>Status</th><th></th></tr></thead>
+    <tbody>${body}</tbody></table></div>`;
+  $('pendArea').querySelectorAll('[data-st]').forEach(s=>s.onchange=()=>updatePendStatus(s.dataset.st,s.value));
+  $('pendArea').querySelectorAll('[data-edit]').forEach(b=>b.onclick=()=>openPendForm(rows[+b.dataset.edit]));
+  $('pendArea').querySelectorAll('[data-del]').forEach(b=>b.onclick=()=>delPend(rows[+b.dataset.del]));
+}
+async function updatePendStatus(id,status){
+  const patch={status}; if(status==='resolvida') patch.resolved_at=new Date().toISOString();
+  const { error }=await db.from('pending_items').update(patch).eq('id',id);
+  if(error){ toast('Erro ao atualizar status.','err'); return; }
+  toast('Status atualizado.'); loadPend();
+}
+function openPendForm(rec){
+  const creating=!rec;
+  const defaultCo=companyId||(companies[0]&&companies[0].id)||'';
+  const coField=creating?`<div class="field"><label>Empresa *</label><select id="peCo">${companies.map(c=>`<option value="${c.id}" ${c.id===defaultCo?'selected':''}>${esc(c.nome_fantasia||c.razao_social)}</option>`).join('')}</select></div>`:'';
+  $('modalRoot').innerHTML=`<div class="overlay"><div class="modal">
+    <div class="modal-h"><h2>${creating?'Nova':'Editar'} pendência</h2><button class="x" id="mx">×</button></div>
+    <div class="modal-b"><div class="cadgrid">
+      ${coField}
+      <div class="field"><label>Tipo *</label><select id="peTipo">${pendCache.tipos.map(t=>`<option value="${t.key}" ${rec&&rec.tipo===t.key?'selected':(!rec&&t.key==='outros'?'selected':'')}>${esc(t.nome)}</option>`).join('')}</select></div>
+      <div class="field" style="grid-column:1/3"><label>Título *</label><input id="peTitulo" value="${esc(rec?rec.titulo:'')}"></div>
+      <div class="field" style="grid-column:1/3"><label>Descrição</label><textarea id="peDesc" rows="2">${esc(rec?rec.descricao:'')}</textarea></div>
+      <div class="field"><label>Prioridade</label><select id="pePrio">${Object.entries(PRIO).map(([k,v])=>`<option value="${k}" ${(rec?rec.prioridade:'media')===k?'selected':''}>${v}</option>`).join('')}</select></div>
+      <div class="field"><label>Responsável</label><select id="peResp"><option value="">—</option>${pendCache.profiles.map(p=>`<option value="${p.id}" ${rec&&rec.assigned_user_id===p.id?'selected':''}>${esc(p.nome||p.email)}</option>`).join('')}</select></div>
+      <div class="field"><label>Prazo</label><input id="pePrazo" type="date" value="${rec&&rec.prazo?rec.prazo:''}"></div>
+      <div class="field"><label>Status</label><select id="peStatus">${Object.entries(PSTATUS).map(([k,v])=>`<option value="${k}" ${(rec?rec.status:'aberta')===k?'selected':''}>${v}</option>`).join('')}</select></div>
+    </div></div>
+    <div class="modal-f"><button class="btn ghost" id="mCancel">Cancelar</button><button class="btn" id="mSave">Salvar</button></div>
+  </div></div>`;
+  $('mx').onclick=$('mCancel').onclick=closeModal;
+  $('mSave').onclick=async ()=>{
+    const titulo=$('peTitulo').value.trim();
+    if(!titulo){ toast('Informe o título.','err'); return; }
+    $('mSave').disabled=true; $('mSave').textContent='Salvando…';
+    const payload={ tipo:$('peTipo').value, titulo, descricao:$('peDesc').value||null,
+      prioridade:$('pePrio').value, assigned_user_id:$('peResp').value||null,
+      prazo:$('pePrazo').value||null, status:$('peStatus').value };
+    let res;
+    if(creating){ payload.company_id=$('peCo').value; payload.origem='manual'; res=await db.from('pending_items').insert(payload); }
+    else res=await db.from('pending_items').update(payload).eq('id',rec.id);
+    $('mSave').disabled=false; $('mSave').textContent='Salvar';
+    if(res.error){ toast('Erro: '+res.error.message,'err'); return; }
+    closeModal(); toast('Pendência '+(creating?'criada!':'atualizada!')); loadPend();
+  };
+}
+async function delPend(rec){
+  const ok=await confirmModal({titulo:'Excluir pendência',texto:`Excluir “${rec.titulo}”?`,ok:'Excluir',perigo:true});
+  if(!ok) return;
+  const { error }=await db.from('pending_items').delete().eq('id',rec.id);
+  if(error){ toast('Erro ao excluir.','err'); return; }
+  toast('Excluída.'); loadPend();
+}
+
+/* ===================== TAREFAS ===================== */
+const TSTATUS={a_fazer:'A fazer',em_andamento:'Em andamento',aguardando:'Aguardando',concluida:'Concluída',cancelada:'Cancelada'};
+const REC={nenhuma:'Não repete',diaria:'Diária',semanal:'Semanal',quinzenal:'Quinzenal',mensal:'Mensal',trimestral:'Trimestral',anual:'Anual'};
+let tarCache={tasks:[],chk:{},profiles:[],templates:[]};
+let tarFilters={status:'',prioridade:'',resp:''};
+const openTasks=new Set();
+function addRec(d,rec){ const b=new Date((d||todayStr())+'T00:00:00');
+  if(rec==='diaria')b.setDate(b.getDate()+1); else if(rec==='semanal')b.setDate(b.getDate()+7);
+  else if(rec==='quinzenal')b.setDate(b.getDate()+15); else if(rec==='mensal')b.setMonth(b.getMonth()+1);
+  else if(rec==='trimestral')b.setMonth(b.getMonth()+3); else if(rec==='anual')b.setMonth(b.getMonth()+12);
+  return b.toISOString().slice(0,10); }
+
+async function renderTarefas(){
+  $('main').innerHTML=`<div class="page-h"><h1>Tarefas</h1><span class="scope">${companyId?'':'· todas as empresas'}</span><div class="spacer"></div>
+    <button class="btn" id="btnNovaTar">+ Nova tarefa</button></div>
+    <div class="updated">Com checklist e recorrência. Ao concluir uma tarefa recorrente, a próxima é criada automaticamente.</div>
+    <div id="tarFilters"></div><div id="tarArea"><div class="loading">Carregando…</div></div>`;
+  $('btnNovaTar').onclick=()=>openTarForm(null);
+  await loadTarefas();
+}
+async function loadTarefas(){
+  try{
+    const [tks,chk,profs,tpls]=await Promise.all([
+      scopeQ(db.from('tasks').select('*')),
+      scopeQ(db.from('task_checklists').select('*')),
+      db.from('profiles').select('id,nome,email'),
+      db.from('task_templates').select('*'),
+    ]);
+    if(tks.error) throw tks.error; if(chk.error) throw chk.error;
+    const byT={}; (chk.data||[]).forEach(c=>{(byT[c.task_id]=byT[c.task_id]||[]).push(c);});
+    Object.values(byT).forEach(a=>a.sort((x,y)=>x.ordem-y.ordem));
+    tarCache={tasks:tks.data||[],chk:byT,profiles:profs.data||[],templates:tpls.data||[]};
+    renderTarFilters(); drawTarefas();
+  }catch(err){ $('tarArea').innerHTML=`<div class="panel"><div class="empty">Erro ao carregar.<br><small>${esc(err.message||err)}</small></div></div>`; }
+}
+function tProf(id){ const p=tarCache.profiles.find(x=>x.id===id); return p?(p.nome||p.email):'—'; }
+function renderTarFilters(){
+  $('tarFilters').innerHTML=`<div class="filters">
+    <div class="fg"><label>Status</label><select id="tfSt"><option value="">Todos</option>${Object.entries(TSTATUS).map(([k,v])=>`<option value="${k}" ${tarFilters.status===k?'selected':''}>${v}</option>`).join('')}<option value="atrasada" ${tarFilters.status==='atrasada'?'selected':''}>Atrasadas</option></select></div>
+    <div class="fg"><label>Prioridade</label><select id="tfPr"><option value="">Todas</option>${Object.entries(PRIO).map(([k,v])=>`<option value="${k}" ${tarFilters.prioridade===k?'selected':''}>${v}</option>`).join('')}</select></div>
+    <div class="fg"><label>Responsável</label><select id="tfRe"><option value="">Todos</option>${tarCache.profiles.map(p=>`<option value="${p.id}" ${tarFilters.resp===p.id?'selected':''}>${esc(p.nome||p.email)}</option>`).join('')}</select></div>
+  </div>`;
+  $('tfSt').onchange=e=>{tarFilters.status=e.target.value;drawTarefas();};
+  $('tfPr').onchange=e=>{tarFilters.prioridade=e.target.value;drawTarefas();};
+  $('tfRe').onchange=e=>{tarFilters.resp=e.target.value;drawTarefas();};
+}
+const isAtrasada=t=>t.prazo && t.prazo<todayStr() && !['concluida','cancelada'].includes(t.status);
+function drawTarefas(){
+  let rows=tarCache.tasks.slice();
+  if(tarFilters.status==='atrasada') rows=rows.filter(isAtrasada);
+  else if(tarFilters.status) rows=rows.filter(t=>t.status===tarFilters.status);
+  if(tarFilters.prioridade) rows=rows.filter(t=>t.prioridade===tarFilters.prioridade);
+  if(tarFilters.resp) rows=rows.filter(t=>t.assigned_user_id===tarFilters.resp);
+  rows.sort((a,b)=>(PRIO_ORDER[a.prioridade]-PRIO_ORDER[b.prioridade])||((a.prazo||'9999').localeCompare(b.prazo||'9999')));
+  if(!rows.length){ $('tarArea').innerHTML='<div class="panel"><div class="empty">Nenhuma tarefa. Clique em “+ Nova tarefa”.</div></div>'; return; }
+  const showCo=!companyId;
+  const stOpts=t=>Object.entries(TSTATUS).map(([k,v])=>`<option value="${k}" ${t.status===k?'selected':''}>${v}</option>`).join('');
+  const body=rows.map((t,i)=>{
+    const open=openTasks.has(t.id);
+    const items=tarCache.chk[t.id]||[];
+    const done=items.filter(c=>c.done).length;
+    const prog=items.length?`${done}/${items.length}`:'—';
+    const atras=isAtrasada(t)?' <span class="pill st-vencido">atrasada</span>':'';
+    const rec=t.recorrencia&&t.recorrencia!=='nenhuma'?` <span class="pill ps-em_andamento" style="font-size:9px">${REC[t.recorrencia]}</span>`:'';
+    const main=`<tr class="title-row" data-i="${i}">
+      <td><span class="caret ${open?'open':''}">▶</span><span class="pill pr-${t.prioridade}">${PRIO[t.prioridade]}</span></td>
+      <td><b>${esc(t.titulo)}</b>${rec}${t.categoria?`<br><span style="font-size:12px;color:var(--muted)">${esc(t.categoria)}</span>`:''}</td>
+      ${showCo?`<td>${esc(coName(t.company_id))}</td>`:''}
+      <td>${esc(tProf(t.assigned_user_id))}</td>
+      <td>${t.prazo?fmtDate(t.prazo):'—'}${atras}</td>
+      <td>${prog}</td>
+      <td><select class="stsel" data-st="${t.id}">${stOpts(t)}</select></td>
+      <td><div class="act"><button class="lnk" data-edit="${i}">Editar</button><button class="lnk del" data-del="${i}">Excluir</button></div></td></tr>`;
+    let det='';
+    if(open){
+      const chkHtml=items.map(c=>`<div style="display:flex;align-items:center;gap:8px;padding:5px 0">
+        <input type="checkbox" data-chk="${c.id}" ${c.done?'checked':''} style="width:16px;height:16px">
+        <span style="flex:1;font-size:13px;${c.done?'text-decoration:line-through;color:var(--muted)':''}">${esc(c.descricao)}</span>
+        <button class="lnk del" data-chkdel="${c.id}" style="padding:2px 8px">×</button></div>`).join('') || '<div style="color:var(--muted);font-size:13px;padding:4px 0">Sem itens no checklist.</div>';
+      det=`<tr><td colspan="${showCo?8:7}" style="background:#f8fafb">
+        <div style="padding:6px 8px 12px 38px">
+          <div style="font-size:12px;font-weight:600;color:var(--ink);margin-bottom:6px">Checklist</div>
+          ${chkHtml}
+          <div style="display:flex;gap:8px;margin-top:8px;max-width:460px">
+            <input id="chkNew_${t.id}" placeholder="Novo item do checklist" style="flex:1;padding:7px 10px;font-size:13px">
+            <button class="mini" data-chkadd="${t.id}">Adicionar</button>
+          </div>
+          ${t.descricao?`<div style="margin-top:10px;font-size:12.5px;color:var(--muted)"><b>Descrição:</b> ${esc(t.descricao)}</div>`:''}
+          ${t.completed_at?`<div style="margin-top:6px;font-size:12px;color:var(--green)">Concluída em ${fmtDate(t.completed_at.slice(0,10))} por ${esc(tProf(t.completed_by))}</div>`:''}
+        </div></td></tr>`;
+    }
+    return main+det;
+  }).join('');
+  $('tarArea').innerHTML=`<div class="panel"><table><thead><tr>
+    <th>Prioridade</th><th>Tarefa</th>${showCo?'<th>Empresa</th>':''}<th>Responsável</th><th>Prazo</th><th>Checklist</th><th>Status</th><th></th></tr></thead>
+    <tbody>${body}</tbody></table></div>`;
+  $('tarArea').querySelectorAll('tr.title-row').forEach(tr=>tr.onclick=e=>{
+    if(e.target.closest('select,button')) return;
+    const t=rows[+tr.dataset.i]; openTasks.has(t.id)?openTasks.delete(t.id):openTasks.add(t.id); drawTarefas();
+  });
+  $('tarArea').querySelectorAll('[data-st]').forEach(s=>s.onclick=e=>e.stopPropagation());
+  $('tarArea').querySelectorAll('[data-st]').forEach(s=>s.onchange=()=>changeTaskStatus(s.dataset.st,s.value));
+  $('tarArea').querySelectorAll('[data-edit]').forEach(b=>b.onclick=e=>{e.stopPropagation();openTarForm(rows[+b.dataset.edit]);});
+  $('tarArea').querySelectorAll('[data-del]').forEach(b=>b.onclick=e=>{e.stopPropagation();delTarefa(rows[+b.dataset.del]);});
+  $('tarArea').querySelectorAll('[data-chk]').forEach(c=>c.onchange=()=>toggleChk(c.dataset.chk,c.checked));
+  $('tarArea').querySelectorAll('[data-chkdel]').forEach(b=>b.onclick=()=>delChk(b.dataset.chkdel));
+  $('tarArea').querySelectorAll('[data-chkadd]').forEach(b=>b.onclick=()=>addChk(b.dataset.chkadd));
+}
+async function changeTaskStatus(id,status){
+  const t=tarCache.tasks.find(x=>x.id===id); if(!t) return;
+  const patch={status};
+  if(status==='concluida'){ patch.completed_at=new Date().toISOString(); patch.completed_by=userId; }
+  const { error }=await db.from('tasks').update(patch).eq('id',id);
+  if(error){ toast('Erro ao atualizar.','err'); return; }
+  if(status==='concluida' && t.recorrencia && t.recorrencia!=='nenhuma') await gerarProximaTarefa(t);
+  toast('Status atualizado.'); loadTarefas();
+}
+async function gerarProximaTarefa(t){
+  const novo={ company_id:t.company_id, titulo:t.titulo, descricao:t.descricao, categoria:t.categoria,
+    assigned_user_id:t.assigned_user_id, prioridade:t.prioridade, recorrencia:t.recorrencia,
+    recurrence_parent_id:t.recurrence_parent_id||t.id, status:'a_fazer',
+    data_inicial: t.data_inicial?addRec(t.data_inicial,t.recorrencia):null,
+    prazo: t.prazo?addRec(t.prazo,t.recorrencia):null };
+  const { data,error }=await db.from('tasks').insert(novo).select('id').single();
+  if(error||!data) return;
+  const items=tarCache.chk[t.id]||[];
+  if(items.length){
+    const copies=items.map(c=>({task_id:data.id,company_id:t.company_id,descricao:c.descricao,done:false,ordem:c.ordem}));
+    await db.from('task_checklists').insert(copies);
+  }
+  toast('Próxima tarefa recorrente criada.');
+}
+async function toggleChk(id,done){ const { error }=await db.from('task_checklists').update({done}).eq('id',id); if(error){toast('Erro.','err');return;} loadTarefas(); }
+async function delChk(id){ const { error }=await db.from('task_checklists').delete().eq('id',id); if(error){toast('Erro.','err');return;} loadTarefas(); }
+async function addChk(taskId){
+  const inp=$('chkNew_'+taskId); const desc=(inp&&inp.value||'').trim(); if(!desc){toast('Digite o item.','err');return;}
+  const t=tarCache.tasks.find(x=>x.id===taskId); const ordem=(tarCache.chk[taskId]||[]).length;
+  const { error }=await db.from('task_checklists').insert({task_id:taskId,company_id:t.company_id,descricao:desc,ordem});
+  if(error){toast('Erro ao adicionar.','err');return;} loadTarefas();
+}
+function openTarForm(rec){
+  const creating=!rec;
+  const defaultCo=companyId||(companies[0]&&companies[0].id)||'';
+  const coField=creating?`<div class="field"><label>Empresa *</label><select id="taCo">${companies.map(c=>`<option value="${c.id}" ${c.id===defaultCo?'selected':''}>${esc(c.nome_fantasia||c.razao_social)}</option>`).join('')}</select></div>`:'';
+  const tplField=creating?`<div class="field" style="grid-column:1/3"><label>Carregar modelo de checklist (opcional)</label><select id="taTpl"><option value="">— nenhum —</option>${tarCache.templates.map(t=>`<option value="${t.id}">${esc(t.nome)} (${(t.itens||[]).length} itens)</option>`).join('')}</select></div>`:'';
+  $('modalRoot').innerHTML=`<div class="overlay"><div class="modal">
+    <div class="modal-h"><h2>${creating?'Nova':'Editar'} tarefa</h2><button class="x" id="mx">×</button></div>
+    <div class="modal-b"><div class="cadgrid">
+      ${coField}
+      <div class="field"><label>Categoria</label><input id="taCat" value="${esc(rec?rec.categoria:'')}" placeholder="ex: Financeiro"></div>
+      <div class="field" style="grid-column:1/3"><label>Título *</label><input id="taTit" value="${esc(rec?rec.titulo:'')}"></div>
+      <div class="field" style="grid-column:1/3"><label>Descrição</label><textarea id="taDesc" rows="2">${esc(rec?rec.descricao:'')}</textarea></div>
+      <div class="field"><label>Responsável</label><select id="taResp"><option value="">—</option>${tarCache.profiles.map(p=>`<option value="${p.id}" ${rec&&rec.assigned_user_id===p.id?'selected':''}>${esc(p.nome||p.email)}</option>`).join('')}</select></div>
+      <div class="field"><label>Prioridade</label><select id="taPrio">${Object.entries(PRIO).map(([k,v])=>`<option value="${k}" ${(rec?rec.prioridade:'media')===k?'selected':''}>${v}</option>`).join('')}</select></div>
+      <div class="field"><label>Data inicial</label><input id="taIni" type="date" value="${rec&&rec.data_inicial?rec.data_inicial:''}"></div>
+      <div class="field"><label>Prazo</label><input id="taPrazo" type="date" value="${rec&&rec.prazo?rec.prazo:''}"></div>
+      <div class="field"><label>Recorrência</label><select id="taRec">${Object.entries(REC).map(([k,v])=>`<option value="${k}" ${(rec?rec.recorrencia:'nenhuma')===k?'selected':''}>${v}</option>`).join('')}</select></div>
+      <div class="field"><label>Status</label><select id="taSt">${Object.entries(TSTATUS).map(([k,v])=>`<option value="${k}" ${(rec?rec.status:'a_fazer')===k?'selected':''}>${v}</option>`).join('')}</select></div>
+      ${tplField}
+    </div></div>
+    <div class="modal-f"><button class="btn ghost" id="mCancel">Cancelar</button><button class="btn" id="mSave">Salvar</button></div>
+  </div></div>`;
+  $('mx').onclick=$('mCancel').onclick=closeModal;
+  $('mSave').onclick=async ()=>{
+    const titulo=$('taTit').value.trim(); if(!titulo){toast('Informe o título.','err');return;}
+    $('mSave').disabled=true; $('mSave').textContent='Salvando…';
+    const payload={ titulo, descricao:$('taDesc').value||null, categoria:$('taCat').value||null,
+      assigned_user_id:$('taResp').value||null, prioridade:$('taPrio').value,
+      data_inicial:$('taIni').value||null, prazo:$('taPrazo').value||null,
+      recorrencia:$('taRec').value, status:$('taSt').value };
+    let res, taskId;
+    if(creating){ payload.company_id=$('taCo').value; res=await db.from('tasks').insert(payload).select('id').single(); taskId=res.data&&res.data.id; }
+    else { res=await db.from('tasks').update(payload).eq('id',rec.id); taskId=rec.id; }
+    if(res.error){ $('mSave').disabled=false; $('mSave').textContent='Salvar'; toast('Erro: '+res.error.message,'err'); return; }
+    // modelo de checklist
+    if(creating){ const tplId=$('taTpl').value; if(tplId){ const tpl=tarCache.templates.find(t=>t.id===tplId);
+      if(tpl && (tpl.itens||[]).length){ const items=tpl.itens.map((d,idx)=>({task_id:taskId,company_id:payload.company_id,descricao:d,ordem:idx})); await db.from('task_checklists').insert(items); } } }
+    $('mSave').disabled=false; $('mSave').textContent='Salvar';
+    closeModal(); toast('Tarefa '+(creating?'criada!':'atualizada!')); loadTarefas();
+  };
+}
+async function delTarefa(rec){
+  const ok=await confirmModal({titulo:'Excluir tarefa',texto:`Excluir “${rec.titulo}”? O checklist também será removido.`,ok:'Excluir',perigo:true});
+  if(!ok) return;
+  const { error }=await db.from('tasks').delete().eq('id',rec.id);
+  if(error){ toast('Erro ao excluir.','err'); return; }
+  toast('Excluída.'); loadTarefas();
+}
+
+/* ===================== DOCUMENTOS ===================== */
+const DSTATUS={pendente:'Pendente',solicitado:'Solicitado',recebido:'Recebido',conferido:'Conferido',rejeitado:'Rejeitado'};
+const DSTCLS={pendente:'ps-aberta',solicitado:'ps-aguardando_cliente',recebido:'ps-em_andamento',conferido:'ps-resolvida',rejeitado:'ps-cancelada'};
+let docCache={docs:[],reqs:[],profiles:[]};
+let docFilters={status:'',busca:''};
+
+async function uploadDoc(companyId,file){
+  const safe=file.name.replace(/[^\w.\-]/g,'_');
+  const path=`${companyId}/${Date.now()}_${safe}`;
+  const { error }=await db.storage.from('documentos').upload(path,file);
+  if(error) throw error; return path;
+}
+async function abrirDoc(path){
+  const { data,error }=await db.storage.from('documentos').createSignedUrl(path,120);
+  if(error){ toast('Erro ao gerar link.','err'); return; }
+  window.open(data.signedUrl,'_blank');
+}
+
+async function renderDocumentos(){
+  $('main').innerHTML=`<div class="page-h"><h1>Documentos</h1><span class="scope">${companyId?'':'· todas as empresas'}</span><div class="spacer"></div>
+    <div class="hbtns"><button class="btn ghost" id="btnSolic">Solicitar documento</button><button class="btn" id="btnEnviar">+ Enviar documento</button></div></div>
+    <div class="updated">Arquivos guardados com segurança (bucket privado, isolados por empresa).</div>
+    <div id="docReqs"></div><div id="docFilters"></div><div id="docArea"><div class="loading">Carregando…</div></div>`;
+  $('btnEnviar').onclick=()=>openDocForm(null);
+  $('btnSolic').onclick=openDocSolicitar;
+  await loadDocs();
+}
+async function loadDocs(){
+  try{
+    const [docs,reqs,profs]=await Promise.all([
+      scopeQ(db.from('documents').select('*, customers(razao_social,nome_fantasia), suppliers(razao_social,nome_fantasia)')).order('created_at',{ascending:false}),
+      scopeQ(db.from('document_requests').select('*')).order('created_at',{ascending:false}),
+      db.from('profiles').select('id,nome,email'),
+    ]);
+    if(docs.error) throw docs.error;
+    docCache={docs:docs.data||[],reqs:reqs.data||[],profiles:profs.data||[]};
+    drawDocReqs(); renderDocFilters(); drawDocs();
+  }catch(err){ $('docArea').innerHTML=`<div class="panel"><div class="empty">Erro ao carregar.<br><small>${esc(err.message||err)}</small></div></div>`; }
+}
+function dProf(id){ const p=docCache.profiles.find(x=>x.id===id); return p?(p.nome||p.email):'—'; }
+function drawDocReqs(){
+  const reqs=docCache.reqs.filter(r=>r.status==='solicitado');
+  if(!reqs.length){ $('docReqs').innerHTML=''; return; }
+  $('docReqs').innerHTML=`<div class="panel" style="margin-bottom:16px"><h3><span class="dot a"></span>Solicitações em aberto (${reqs.length})</h3>
+    <table><thead><tr><th>Descrição</th><th>Tipo</th><th>Competência</th><th>Responsável</th><th>Prazo</th><th></th></tr></thead>
+    <tbody>${reqs.map((r,i)=>`<tr><td><b>${esc(r.descricao)}</b></td><td>${esc(r.tipo_documento||'—')}</td>
+      <td>${r.competencia?fmtDate(r.competencia):'—'}</td><td>${esc(dProf(r.assigned_user_id))}</td><td>${r.prazo?fmtDate(r.prazo):'—'}</td>
+      <td><div class="act"><button class="lnk" data-anexar="${i}">Anexar</button><button class="lnk" data-reqok="${i}">Marcar recebido</button></div></td></tr>`).join('')}</tbody></table></div>`;
+  $('docReqs').querySelectorAll('[data-anexar]').forEach(b=>b.onclick=()=>openDocForm(null, reqs[+b.dataset.anexar]));
+  $('docReqs').querySelectorAll('[data-reqok]').forEach(b=>b.onclick=()=>marcarReqRecebido(reqs[+b.dataset.reqok]));
+}
+async function marcarReqRecebido(req){
+  const { error }=await db.from('document_requests').update({status:'recebido'}).eq('id',req.id);
+  if(error){ toast('Erro.','err'); return; } toast('Solicitação marcada como recebida.'); loadDocs();
+}
+function renderDocFilters(){
+  $('docFilters').innerHTML=`<div class="filters">
+    <div class="fg"><label>Status</label><select id="dfSt"><option value="">Todos</option>${Object.entries(DSTATUS).map(([k,v])=>`<option value="${k}" ${docFilters.status===k?'selected':''}>${v}</option>`).join('')}</select></div>
+    <div class="fg"><label>Buscar</label><input id="dfB" placeholder="nome do documento" value="${esc(docFilters.busca)}"></div>
+  </div>`;
+  $('dfSt').onchange=e=>{docFilters.status=e.target.value;drawDocs();};
+  $('dfB').oninput=e=>{docFilters.busca=e.target.value;drawDocs();};
+}
+function drawDocs(){
+  let rows=docCache.docs.slice();
+  if(docFilters.status) rows=rows.filter(d=>d.status===docFilters.status);
+  if(docFilters.busca) rows=rows.filter(d=>(d.nome||'').toLowerCase().includes(docFilters.busca.toLowerCase()));
+  if(!rows.length){ $('docArea').innerHTML='<div class="panel"><div class="empty">Nenhum documento. Clique em “+ Enviar documento”.</div></div>'; return; }
+  const showCo=!companyId;
+  const vinc=d=>{ const c=d.customers&&(d.customers.nome_fantasia||d.customers.razao_social); const s=d.suppliers&&(d.suppliers.nome_fantasia||d.suppliers.razao_social); return c?('Cliente: '+c):(s?('Forn.: '+s):'—'); };
+  const stOpts=d=>Object.entries(DSTATUS).map(([k,v])=>`<option value="${k}" ${d.status===k?'selected':''}>${v}</option>`).join('');
+  const body=rows.map((d,i)=>`<tr>
+    <td><b>${esc(d.nome)}</b>${d.tipo?`<br><span style="font-size:12px;color:var(--muted)">${esc(d.tipo)}</span>`:''}</td>
+    ${showCo?`<td>${esc(coName(d.company_id))}</td>`:''}
+    <td>${esc(vinc(d))}</td>
+    <td>${d.competencia?fmtDate(d.competencia):'—'}</td>
+    <td><select class="stsel ${DSTCLS[d.status]}" data-st="${d.id}">${stOpts(d)}</select></td>
+    <td><div class="act">${d.storage_path?`<button class="lnk" data-open="${i}">Baixar</button>`:''}<button class="lnk" data-edit="${i}">Editar</button><button class="lnk del" data-del="${i}">Excluir</button></div></td></tr>`).join('');
+  $('docArea').innerHTML=`<div class="panel"><table><thead><tr><th>Documento</th>${showCo?'<th>Empresa</th>':''}<th>Vínculo</th><th>Competência</th><th>Status</th><th></th></tr></thead><tbody>${body}</tbody></table></div>`;
+  $('docArea').querySelectorAll('[data-st]').forEach(s=>s.onchange=()=>updateDocStatus(s.dataset.st,s.value));
+  $('docArea').querySelectorAll('[data-open]').forEach(b=>b.onclick=()=>abrirDoc(rows[+b.dataset.open].storage_path));
+  $('docArea').querySelectorAll('[data-edit]').forEach(b=>b.onclick=()=>openDocForm(rows[+b.dataset.edit]));
+  $('docArea').querySelectorAll('[data-del]').forEach(b=>b.onclick=()=>delDoc(rows[+b.dataset.del]));
+}
+async function updateDocStatus(id,status){
+  const { error }=await db.from('documents').update({status}).eq('id',id);
+  if(error){ toast('Erro.','err'); return; } toast('Status atualizado.'); loadDocs();
+}
+async function fillDocSelects(co){
+  if(!co) return;
+  const [cli,forn,acc,cat]=await Promise.all([
+    db.from('customers').select('id,razao_social,nome_fantasia').eq('company_id',co).order('razao_social'),
+    db.from('suppliers').select('id,razao_social,nome_fantasia').eq('company_id',co).order('razao_social'),
+    db.from('financial_accounts').select('id,nome').eq('company_id',co).order('nome'),
+    db.from('categories').select('id,nome').eq('company_id',co).order('nome'),
+  ]);
+  const opt=(arr,lbl,sel)=>'<option value="">—</option>'+(arr.data||[]).map(x=>`<option value="${x.id}" ${sel===x.id?'selected':''}>${esc(lbl(x))}</option>`).join('');
+  return {cli,forn,acc,cat,opt};
+}
+async function openDocForm(rec, req){
+  const creating=!rec;
+  const defaultCo=(req&&req.company_id)||(rec&&rec.company_id)||companyId||(companies[0]&&companies[0].id)||'';
+  $('modalRoot').innerHTML=`<div class="overlay"><div class="modal">
+    <div class="modal-h"><h2>${creating?'Enviar':'Editar'} documento</h2><button class="x" id="mx">×</button></div>
+    <div class="modal-b"><div class="cadgrid">
+      <div class="field"><label>Empresa *</label><select id="doCo" ${creating?'':'disabled'}>${companies.map(c=>`<option value="${c.id}" ${c.id===defaultCo?'selected':''}>${esc(c.nome_fantasia||c.razao_social)}</option>`).join('')}</select></div>
+      <div class="field"><label>Tipo</label><input id="doTipo" value="${esc(rec?rec.tipo:(req?req.tipo_documento||'':''))}" placeholder="NF, contrato, boleto…"></div>
+      <div class="field" style="grid-column:1/3"><label>Nome do documento *</label><input id="doNome" value="${esc(rec?rec.nome:(req?req.descricao:''))}" placeholder="ex: NF 123 - Fornecedor X"></div>
+      ${creating?`<div class="field" style="grid-column:1/3"><label>Arquivo</label><input id="doFile" type="file"><div class="hint">Opcional. Sem arquivo, o documento fica como pendente/solicitado.</div></div>`:''}
+      <div class="field"><label>Data</label><input id="doData" type="date" value="${rec&&rec.data?rec.data:''}"></div>
+      <div class="field"><label>Competência</label><input id="doComp" type="date" value="${rec&&rec.competencia?rec.competencia:(req&&req.competencia?req.competencia:'')}"></div>
+      <div class="field"><label>Cliente</label><select id="doCli"><option value="">—</option></select></div>
+      <div class="field"><label>Fornecedor</label><select id="doForn"><option value="">—</option></select></div>
+      <div class="field"><label>Conta financeira</label><select id="doAcc"><option value="">—</option></select></div>
+      <div class="field"><label>Categoria</label><select id="doCat"><option value="">—</option></select></div>
+      <div class="field"><label>Status</label><select id="doSt">${Object.entries(DSTATUS).map(([k,v])=>`<option value="${k}" ${(rec?rec.status:(req?'recebido':'recebido'))===k?'selected':''}>${v}</option>`).join('')}</select></div>
+    </div></div>
+    <div class="modal-f"><button class="btn ghost" id="mCancel">Cancelar</button><button class="btn" id="mSave">Salvar</button></div>
+  </div></div>`;
+  $('mx').onclick=$('mCancel').onclick=closeModal;
+  async function loadSel(co){ const s=await fillDocSelects(co); if(!s)return;
+    $('doCli').innerHTML=s.opt(s.cli,x=>x.nome_fantasia||x.razao_social, rec?rec.customer_id:null);
+    $('doForn').innerHTML=s.opt(s.forn,x=>x.nome_fantasia||x.razao_social, rec?rec.supplier_id:null);
+    $('doAcc').innerHTML=s.opt(s.acc,x=>x.nome, rec?rec.financial_account_id:null);
+    $('doCat').innerHTML=s.opt(s.cat,x=>x.nome, rec?rec.categoria_id:null);
+  }
+  await loadSel(defaultCo);
+  if(creating) $('doCo').onchange=()=>loadSel($('doCo').value);
+  $('mSave').onclick=async ()=>{
+    const nome=$('doNome').value.trim(); if(!nome){toast('Informe o nome.','err');return;}
+    const co=creating?$('doCo').value:rec.company_id;
+    $('mSave').disabled=true; $('mSave').textContent='Salvando…';
+    try{
+      let storage_path=rec?rec.storage_path:null;
+      if(creating){ const f=$('doFile').files[0]; if(f) storage_path=await uploadDoc(co,f); }
+      const payload={ nome, tipo:$('doTipo').value||null, data:$('doData').value||null, competencia:$('doComp').value||null,
+        customer_id:$('doCli').value||null, supplier_id:$('doForn').value||null,
+        financial_account_id:$('doAcc').value||null, categoria_id:$('doCat').value||null,
+        status:$('doSt').value, storage_path };
+      let res, docId;
+      if(creating){ payload.company_id=co; res=await db.from('documents').insert(payload).select('id').single(); docId=res.data&&res.data.id; }
+      else res=await db.from('documents').update(payload).eq('id',rec.id);
+      if(res.error) throw res.error;
+      if(req && docId){ await db.from('document_requests').update({status:'recebido',document_id:docId}).eq('id',req.id); }
+      closeModal(); toast('Documento salvo!'); loadDocs();
+    }catch(err){ toast('Erro: '+(err.message||err),'err'); }
+    $('mSave').disabled=false; $('mSave').textContent='Salvar';
+  };
+}
+async function delDoc(rec){
+  const ok=await confirmModal({titulo:'Excluir documento',texto:`Excluir “${rec.nome}”? O arquivo também será removido.`,ok:'Excluir',perigo:true});
+  if(!ok) return;
+  if(rec.storage_path){ await db.storage.from('documentos').remove([rec.storage_path]); }
+  const { error }=await db.from('documents').delete().eq('id',rec.id);
+  if(error){ toast('Erro ao excluir.','err'); return; } toast('Excluído.'); loadDocs();
+}
+function openDocSolicitar(){
+  const defaultCo=companyId||(companies[0]&&companies[0].id)||'';
+  $('modalRoot').innerHTML=`<div class="overlay"><div class="modal">
+    <div class="modal-h"><h2>Solicitar documento</h2><button class="x" id="mx">×</button></div>
+    <div class="modal-b"><div class="cadgrid">
+      <div class="field"><label>Empresa *</label><select id="srCo">${companies.map(c=>`<option value="${c.id}" ${c.id===defaultCo?'selected':''}>${esc(c.nome_fantasia||c.razao_social)}</option>`).join('')}</select></div>
+      <div class="field"><label>Tipo de documento</label><input id="srTipo" placeholder="NF, comprovante…"></div>
+      <div class="field" style="grid-column:1/3"><label>Descrição *</label><input id="srDesc" placeholder="ex: NF de setembro do fornecedor X"></div>
+      <div class="field"><label>Responsável</label><select id="srResp"><option value="">—</option>${docCache.profiles.map(p=>`<option value="${p.id}">${esc(p.nome||p.email)}</option>`).join('')}</select></div>
+      <div class="field"><label>Prioridade</label><select id="srPrio">${Object.entries(PRIO).map(([k,v])=>`<option value="${k}" ${k==='media'?'selected':''}>${v}</option>`).join('')}</select></div>
+      <div class="field"><label>Competência</label><input id="srComp" type="date"></div>
+      <div class="field"><label>Prazo</label><input id="srPrazo" type="date"></div>
+    </div><div class="hint" style="margin-top:8px">Ao solicitar, uma pendência do tipo “Documento” é criada automaticamente.</div></div>
+    <div class="modal-f"><button class="btn ghost" id="mCancel">Cancelar</button><button class="btn" id="mSave">Solicitar</button></div>
+  </div></div>`;
+  $('mx').onclick=$('mCancel').onclick=closeModal;
+  $('mSave').onclick=async ()=>{
+    const desc=$('srDesc').value.trim(); if(!desc){toast('Informe a descrição.','err');return;}
+    const co=$('srCo').value;
+    $('mSave').disabled=true; $('mSave').textContent='Solicitando…';
+    const req={ company_id:co, descricao:desc, tipo_documento:$('srTipo').value||null,
+      assigned_user_id:$('srResp').value||null, competencia:$('srComp').value||null,
+      prazo:$('srPrazo').value||null, prioridade:$('srPrio').value, status:'solicitado' };
+    const r1=await db.from('document_requests').insert(req);
+    if(r1.error){ $('mSave').disabled=false; $('mSave').textContent='Solicitar'; toast('Erro: '+r1.error.message,'err'); return; }
+    await db.from('pending_items').insert({ company_id:co, tipo:'documento', titulo:'Documento solicitado: '+desc,
+      descricao:$('srTipo').value||null, prioridade:$('srPrio').value, assigned_user_id:$('srResp').value||null,
+      prazo:$('srPrazo').value||null, status:'aberta', origem:'manual' });
+    $('mSave').disabled=false; $('mSave').textContent='Solicitar';
+    closeModal(); toast('Documento solicitado e pendência criada!'); loadDocs();
+  };
 }
 
 boot();

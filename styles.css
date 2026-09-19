@@ -101,6 +101,13 @@ tr.inst-row td{background:#f8fafb;font-size:12.5px;color:#475569}
 .filters select,.filters input{padding:8px 10px;font-size:13px;min-width:150px}
 .mini{font-size:12px;font-weight:600;padding:5px 11px;border-radius:8px;background:var(--teal-soft);color:var(--teal-d)}
 .mini:hover{background:#d5efe9}
+.pr-baixa{background:#eef2f7;color:#475569}.pr-media{background:#e6f5f2;color:#0b7a6e}
+.pr-alta{background:#fff7e6;color:#b45309}.pr-critica{background:#fef2f2;color:#dc2626}
+.ps-aberta{background:#eef2f7;color:#475569}.ps-em_andamento{background:#e6f0fb;color:#1d4ed8}
+.ps-aguardando_cliente,.ps-aguardando_documento{background:#fff7e6;color:#b45309}
+.ps-resolvida{background:#e7f6ec;color:#15803d}.ps-cancelada{background:#f1f5f9;color:#94a3b8}
+.stsel{font-size:12px;padding:5px 8px;border-radius:8px;border:1.5px solid var(--line);background:#fff}
+.hbtns{display:flex;gap:8px}
 .nav-item .star{margin-left:auto;font-size:14px;color:#cbd5e1;padding:2px 5px;border-radius:6px;line-height:1;flex:none}
 .nav-item .star:hover{color:var(--amber);background:#f1f5f9}
 .nav-item .star.on{color:var(--amber)}
