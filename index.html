@@ -4,24 +4,20 @@
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>Candidus Gestão Financeira</title>
-
-<script>
-  const SUPABASE_URL      = "https://bevxncltfexzdoyfyjcw.supabase.co";
-  const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImJldnhuY2x0ZmV4emRveWZ5amN3Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODkxODExNTEsImV4cCI6MjEwNDc1NzE1MX0.wiWeB1S4tZIsUH5ds9YC4E51PiNUR_8aoLDTQdMKpLg";
-</script>
+<link rel="icon" type="image/png" href="img/logo-icone.png">
 
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Space+Grotesk:wght@600;700&display=swap" rel="stylesheet">
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-<link rel="stylesheet" href="./styles.css">
+
+<link rel="stylesheet" href="css/styles.css">
 </head>
 <body>
 
 <div id="login">
   <div class="login-card">
-    <div class="brand"><div class="mark">C</div><div class="name">Candidus</div></div>
-    <p class="sub">Gestão Financeira · BPO · Controladoria</p>
+    <div class="brandlogo"><img class="logo-full" src="img/logo-completo.jpg" alt="Candidus Gestão Financeira"></div>
     <div id="loginMsg"></div>
     <form id="loginForm">
       <div class="field"><label>E-mail</label>
@@ -36,13 +32,14 @@
 <div id="app" class="hidden">
   <div class="topbar">
     <button class="burger" id="burger" title="Recolher menu">☰</button>
-    <div class="mark">C</div><div class="name">Candidus</div>
+    <img class="markimg" src="img/logo-icone.png" alt="C"><div class="name">Candidus</div>
     <div class="company-pick">
       <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 21h18M5 21V7l7-4 7 4v14M9 9h1m4 0h1M9 13h1m4 0h1M9 17h1m4 0h1"/></svg>
       <select id="companySel"></select>
     </div>
     <div class="spacer"></div>
-    <div class="user"><span class="email" id="userEmail"></span>
+    <div class="user"><button class="themebtn" id="themeToggle" title="Modo noite / claro">🌙</button>
+      <span class="email" id="userEmail"></span>
       <button class="out" id="logout">Sair</button></div>
   </div>
   <nav class="side" id="side"></nav>
@@ -52,20 +49,32 @@
 <div id="modalRoot"></div>
 <div id="toast"></div>
 
-<script src="./config.js"></script>
-<script src="./core.js"></script>
-<script src="./dashboard.js"></script>
-<script src="./contas-receber.js"></script>
-<script src="./contas-a-pargar.js"></script>
-<script src="./cadastro.js"></script>
-<script src="./fluxo-caixa.js"></script>
-<script src="./pedencias.js"></script>
-<script src="./tarefas.js"></script>
-<script src="./documentos.js"></script>
-<script src="./dre.js"></script>
-<script src="./orcamento.js"></script>
-<script src="./realizado-orcado.js"></script>
-<script src="./indicadores.js"></script>
-<script src="./main.js"></script>
+<!-- Ordem importa: config → core → módulos → app (app.js chama boot() e precisa ser o último) -->
+<script src="js/config.js"></script>
+<script src="js/core.js"></script>
+<script src="js/dashboard.js"></script>
+<script src="js/financeiro/contas-receber.js"></script>
+<script src="js/financeiro/contas-pagar.js"></script>
+<script src="js/financeiro/fluxo-caixa.js"></script>
+<script src="js/financeiro/cartoes.js"></script>
+<script src="js/financeiro/importar-extrato.js"></script>
+<script src="js/financeiro/conciliacao.js"></script>
+<script src="js/financeiro/conciliacao-regras.js"></script>
+<script src="js/financeiro/lancamento-lote.js"></script>
+<script src="js/financeiro/baixa-lote.js"></script>
+<script src="js/financeiro/recorrentes.js"></script>
+<script src="js/cadastros/cadastros.js"></script>
+<script src="js/cadastros/categorias.js"></script>
+<script src="js/cadastros/empresas.js"></script>
+<script src="js/bpo/pendencias.js"></script>
+<script src="js/bpo/tarefas.js"></script>
+<script src="js/bpo/documentos.js"></script>
+<script src="js/controladoria/dre.js"></script>
+<script src="js/controladoria/orcamento.js"></script>
+<script src="js/controladoria/realizado-orcado.js"></script>
+<script src="js/controladoria/indicadores.js"></script>
+<script src="js/controladoria/custos.js"></script>
+<script src="js/controladoria/fixo-variavel.js"></script>
+<script src="js/app.js"></script>
 </body>
 </html>

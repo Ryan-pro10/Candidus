@@ -1,0 +1,7 @@
+# Só o app vai pro site. O resto fica no GitHub, mas não é publicado.
+supabase/
+docs/
+tools/
+exemplos/
+README.md
+CLAUDE.md
